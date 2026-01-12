@@ -55,6 +55,7 @@ class TradingViewModel: ObservableObject {
     @Published var initialCapital: Double
     
     private var timer: Timer?
+    private var priceHistory: [String: [Double]] = [:]
     
     let assets: [Asset] = [
         Asset(symbol: "BTC/USD", name: "Bitcoin", type: .crypto, basePrice: 45000),
@@ -78,6 +79,7 @@ class TradingViewModel: ObservableObject {
     func initializePrices() {
         for asset in assets {
             prices[asset.symbol] = asset.basePrice
+            priceHistory[asset.symbol] = [asset.basePrice]
         }
     }
     
@@ -93,23 +95,35 @@ class TradingViewModel: ObservableObject {
             let volatility: Double
             
             switch asset.type {
-            case .crypto: volatility = 0.002
-            case .forex: volatility = 0.0005
-            case .stock: volatility = 0.001
-            case .index: volatility = 0.001
+            case .crypto: volatility = 0.003
+            case .forex: volatility = 0.0008
+            case .stock: volatility = 0.0015
+            case .index: volatility = 0.0012
             }
             
-            let change = (Double.random(in: 0...1) - 0.5) * 2 * volatility
-            prices[asset.symbol] = currentPrice * (1 + change)
+            // More chaotic price movement
+            let trend = Double.random(in: -0.3...0.7) // Slight upward bias
+            let randomWalk = (Double.random(in: 0...1) - 0.5) * 2
+            let change = (trend * 0.3 + randomWalk * 0.7) * volatility
+            
+            let newPrice = currentPrice * (1 + change)
+            prices[asset.symbol] = newPrice
+            
+            // Store price history
+            if priceHistory[asset.symbol] == nil {
+                priceHistory[asset.symbol] = []
+            }
+            priceHistory[asset.symbol]?.append(newPrice)
+            if priceHistory[asset.symbol]?.count ?? 0 > 50 {
+                priceHistory[asset.symbol]?.removeFirst()
+            }
         }
     }
     
-    func updateChartData(for symbol: String) {
-        if let price = prices[symbol] {
-            chartData.append(PricePoint(timestamp: Date(), price: price))
-            if chartData.count > 30 {
-                chartData.removeFirst()
-            }
+    func getChartData(for symbol: String) -> [PricePoint] {
+        guard let history = priceHistory[symbol] else { return [] }
+        return history.enumerated().map { index, price in
+            PricePoint(timestamp: Date().addingTimeInterval(TimeInterval(index * 2)), price: price)
         }
     }
     
@@ -153,6 +167,17 @@ class TradingViewModel: ObservableObject {
         
         saveData()
         return true
+    }
+    
+    func closePosition(position: Position) {
+        let price = getPrice(for: position.symbol)
+        balance += position.amount * price
+        
+        if let index = positions.firstIndex(where: { $0.id == position.id }) {
+            positions.remove(at: index)
+        }
+        
+        saveData()
     }
     
     func getPortfolioValue() -> Double {
@@ -215,6 +240,11 @@ struct ContentView: View {
                     Label("Home", systemImage: "house.fill")
                 }
             
+            MarketsView()
+                .tabItem {
+                    Label("Markets", systemImage: "chart.line.uptrend.xyaxis")
+                }
+            
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gearshape.fill")
@@ -227,17 +257,6 @@ struct ContentView: View {
 // MARK: - Home View
 struct HomeView: View {
     @EnvironmentObject var viewModel: TradingViewModel
-    @State private var searchText = ""
-    
-    var filteredAssets: [Asset] {
-        if searchText.isEmpty {
-            return viewModel.assets
-        }
-        return viewModel.assets.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText) ||
-            $0.symbol.localizedCaseInsensitiveContains(searchText)
-        }
-    }
     
     var body: some View {
         NavigationView {
@@ -296,37 +315,71 @@ struct HomeView: View {
                     )
                     
                     // Positions
-                    if !viewModel.positions.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Positions")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .padding(.horizontal)
-                            
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Open Positions")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .padding(.horizontal)
+                        
+                        if viewModel.positions.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "chart.xyaxis.line")
+                                    .font(.system(size: 48))
+                                    .foregroundColor(.gray.opacity(0.5))
+                                
+                                Text("No open positions")
+                                    .font(.headline)
+                                    .foregroundColor(.gray)
+                                
+                                Text("Start trading in Markets tab")
+                                    .font(.subheadline)
+                                    .foregroundColor(.gray.opacity(0.7))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 40)
+                        } else {
                             ForEach(viewModel.positions) { position in
                                 PositionCard(position: position)
                             }
                         }
                     }
-                    
-                    // Markets
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Markets")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .padding(.horizontal)
-                        
-                        ForEach(filteredAssets) { asset in
-                            NavigationLink(destination: AssetDetailView(asset: asset)) {
-                                AssetCard(asset: asset)
-                            }
-                            .buttonStyle(PlainButtonStyle())
+                }
+                .padding(.vertical)
+            }
+            .navigationTitle("Home")
+        }
+    }
+}
+
+// MARK: - Markets View
+struct MarketsView: View {
+    @EnvironmentObject var viewModel: TradingViewModel
+    @State private var searchText = ""
+    
+    var filteredAssets: [Asset] {
+        if searchText.isEmpty {
+            return viewModel.assets
+        }
+        return viewModel.assets.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText) ||
+            $0.symbol.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(filteredAssets) { asset in
+                        NavigationLink(destination: AssetDetailView(asset: asset)) {
+                            AssetCard(asset: asset)
                         }
+                        .buttonStyle(PlainButtonStyle())
                     }
                 }
                 .padding(.vertical)
             }
-            .navigationTitle("Paper Trading")
+            .navigationTitle("Markets")
             .searchable(text: $searchText, prompt: "Search assets")
         }
     }
@@ -389,6 +442,7 @@ struct AssetCard: View {
 struct PositionCard: View {
     @EnvironmentObject var viewModel: TradingViewModel
     let position: Position
+    @State private var showCloseAlert = false
     
     var currentPrice: Double {
         viewModel.getPrice(for: position.symbol)
@@ -403,7 +457,7 @@ struct PositionCard: View {
     }
     
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(position.symbol)
@@ -423,12 +477,32 @@ struct PositionCard: View {
                         .foregroundColor(pnl >= 0 ? .green : .red)
                 }
             }
+            
+            Button(action: {
+                showCloseAlert = true
+            }) {
+                Text("Close Position")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.red)
+                    .cornerRadius(8)
+            }
         }
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
         .padding(.horizontal)
+        .alert("Close Position?", isPresented: $showCloseAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Close", role: .destructive) {
+                viewModel.closePosition(position: position)
+            }
+        } message: {
+            Text("Close \(position.symbol) position with \(pnl >= 0 ? "profit" : "loss") of $\(abs(pnl), specifier: "%.2f")?")
+        }
     }
 }
 
@@ -458,6 +532,10 @@ struct AssetDetailView: View {
         viewModel.positions.first(where: { $0.symbol == asset.symbol })
     }
     
+    var chartData: [PricePoint] {
+        viewModel.getChartData(for: asset.symbol)
+    }
+    
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
@@ -476,12 +554,13 @@ struct AssetDetailView: View {
                 .padding()
                 
                 // Chart
-                if !viewModel.chartData.isEmpty {
-                    Chart(viewModel.chartData) { point in
+                if !chartData.isEmpty {
+                    Chart(chartData) { point in
                         LineMark(
                             x: .value("Time", point.timestamp),
                             y: .value("Price", point.price)
                         )
+                        .interpolationMethod(.catmullRom)
                         .foregroundStyle(change >= 0 ? Color.green : Color.red)
                     }
                     .frame(height: 200)
@@ -557,12 +636,6 @@ struct AssetDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .alert(alertMessage, isPresented: $showAlert) {
             Button("OK", role: .cancel) { }
-        }
-        .onAppear {
-            viewModel.chartData = []
-            Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { timer in
-                viewModel.updateChartData(for: asset.symbol)
-            }
         }
     }
     
