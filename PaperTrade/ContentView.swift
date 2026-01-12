@@ -554,20 +554,38 @@ struct AssetDetailView: View {
                 .padding()
                 
                 // Chart
-                if !chartData.isEmpty {
-                    Chart(chartData) { point in
-                        LineMark(
-                            x: .value("Time", point.timestamp),
-                            y: .value("Price", point.price)
-                        )
-                        .interpolationMethod(.catmullRom)
-                        .foregroundStyle(change >= 0 ? Color.green : Color.red)
+                    if !chartData.isEmpty {
+
+                        let prices = chartData.map { $0.price }
+                        let minPrice = prices.min() ?? 0
+                        let maxPrice = prices.max() ?? 0
+                        let padding = (maxPrice - minPrice) * 0.5
+
+                        Chart {
+                            ForEach(chartData) { point in
+                                LineMark(
+                                    x: .value("Time", point.timestamp),
+                                    y: .value("Price", point.price)
+                                )
+                                .interpolationMethod(.linear) // ← углы
+                                .foregroundStyle(change >= 0 ? .green : .red)
+                            }
+
+                            if let last = chartData.last {
+                                PointMark(
+                                    x: .value("Time", last.timestamp),
+                                    y: .value("Price", last.price)
+                                )
+                                .symbolSize(90)
+                                .foregroundStyle(change >= 0 ? .green : .red)
+                            }
+                        }
+                        .frame(height: 300)
+                        .chartYScale(domain: (minPrice - padding)...(maxPrice + padding))
+                        .chartXAxis(.hidden)
+                        .chartYAxis(.hidden)
+                        .padding()
                     }
-                    .frame(height: 200)
-                    .chartXAxis(.hidden)
-                    .chartYAxis(.hidden)
-                    .padding()
-                }
                 
                 // Position Info
                 if let pos = position {
@@ -710,4 +728,8 @@ struct SettingsView: View {
             }
         }
     }
+}
+
+#Preview {
+    ContentView()
 }
