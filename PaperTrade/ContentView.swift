@@ -729,7 +729,3 @@ struct SettingsView: View {
         }
     }
 }
-
-#Preview {
-    ContentView()
-}
